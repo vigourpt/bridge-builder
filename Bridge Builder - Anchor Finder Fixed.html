@@ -1092,6 +1092,19 @@
         async function findAnchorKeywords(keyword, location, minCPC, minVolume, credentials) {
             showLoading('anchor-results', 'Initializing anchor keyword search...');
             console.log('Starting anchor keyword search for:', keyword);
+
+            // Input Validation for keyword
+            if (typeof keyword !== 'string' || keyword.trim() === '') {
+                showError('Please enter a valid keyword or niche to search.');
+                // Reset button and hide loading since we are returning early
+                const button = document.getElementById('find-anchor-button');
+                if (button) {
+                    button.disabled = false;
+                    button.innerHTML = '<span class="button-icon">🔍</span> Find Anchor Keywords';
+                }
+                document.getElementById('anchor-results').innerHTML = ''; // Clear any previous results or loading messages
+                return;
+            }
             
             try {
                 updateLoadingMessage('Connecting to DataForSEO API...');
@@ -1284,6 +1297,7 @@
                     // Try to find mock data for this keyword
                     let mockDataFound = false;
                     for (const category in mockKeywordData) {
+                        if (typeof keyword !== 'string' || typeof category !== 'string') continue; // Validation for mock data fallback
                         if (keyword.toLowerCase().includes(category.toLowerCase()) || 
                             category.toLowerCase().includes(keyword.toLowerCase())) {
                             combinedKeywords = mockKeywordData[category];
@@ -1318,6 +1332,7 @@
                 const seenKeywords = new Set();
                 
                 for (const kw of combinedKeywords) {
+                    if (typeof kw.keyword !== 'string') continue; // Validation in combinedKeywords loop
                     if (!seenKeywords.has(kw.keyword.toLowerCase())) {
                         seenKeywords.add(kw.keyword.toLowerCase());
                         uniqueKeywords.push(kw);
