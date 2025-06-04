@@ -1029,9 +1029,11 @@
             button.innerHTML = '<span class="loading-spinner"></span> Searching...';
             
             document.getElementById('anchor-results-container').style.display = 'block';
+            showLoading('anchor-results', 'Initializing hierarchical anchor keyword search...'); // Initial loading message
             
             try {
-                // Find anchor keywords
+                // Call the updated findAnchorKeywords which orchestrates the hierarchical search
+                // Parameters: initialSearchTerm, location, userMinCPC, minVolume, credentials
                 const results = await findAnchorKeywords(keyword, location, minCPC, minVolume, credentials);
                 
                 // Display results
@@ -1088,295 +1090,284 @@
             }, 5000);
         }
 
-        // Find anchor keywords - UPDATED FUNCTION
-        async function findAnchorKeywords(keyword, location, minCPC, minVolume, credentials) {
-            showLoading('anchor-results', 'Initializing anchor keyword search...');
-            console.log('Starting anchor keyword search for:', keyword);
+        // Fetch Raw Keyword Data from APIs
+        async function fetchRawKeywordData(searchTerm, locationCode, credentials) {
+            updateLoadingMessage(`Fetching data for "${searchTerm}"...`);
             
+            let combinedKeywords = [];
+            let apiErrors = [];
+
+            // 1. First try - Google Ads Keywords for Keyword
             try {
-                updateLoadingMessage('Connecting to DataForSEO API...');
-                
-                // Get location code
-                const locationCode = getLocationCodeFromName(location);
-                console.log('Using location code:', locationCode);
-                
-                // Check if category is likely to have high CPC
-                const isLikelyHighCPC = highCPCCategories.some(category => 
-                    keyword.toLowerCase().includes(category.toLowerCase())
-                );
-                
-                console.log('Is likely high CPC category:', isLikelyHighCPC);
-                
-                // Set up request parameters
-                updateLoadingMessage('Setting up API request parameters...');
-                
-                // Try multiple API endpoints for better results
-                let combinedKeywords = [];
-                let apiErrors = [];
-                
-                // 1. First try - Google Ads Keywords for Keyword
-                try {
-                    updateLoadingMessage('Searching Google Ads keywords data...');
-                    
-                    const googleAdsUrl = 'https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live';
-                    const adsRequestData = [{
-                        keywords: [keyword],
-                        location_code: locationCode,
-                        language_code: "en",
-                        include_adult_keywords: false,
-                        sort_by: "relevance",
-                        limit: 300
-                    }];
-                    
-                    const adsResponse = await fetchWithTimeout(googleAdsUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(adsRequestData)
-                    }, 45000);
-                    
-                    if (adsResponse.ok) {
-                        const adsData = await adsResponse.json();
-                        console.log('Google Ads API response:', adsData);
-                        
-                        if (adsData.tasks && adsData.tasks[0].result && adsData.tasks[0].result.length > 0) {
-                            updateLoadingMessage('Processing Google Ads keywords data...');
-                            
-                            const adsKeywords = adsData.tasks[0].result[0].keywords.map(item => ({
-                                keyword: item.keyword,
-                                searchVolume: item.average_monthly_searches || 0,
-                                cpc: item.competition_metrics?.cpc || 0,
-                                competition: item.competition_index || 0,
-                                difficulty: Math.floor(Math.random() * 40) + 40 // Approx value as not provided directly
-                            }));
-                            
-                            combinedKeywords = [...combinedKeywords, ...adsKeywords];
-                            console.log(`Added ${adsKeywords.length} keywords from Google Ads API`);
-                        } else {
-                            console.log('No results from Google Ads API');
-                            apiErrors.push('No results from Google Ads API');
-                        }
-                    } else {
-                        const errorText = await adsResponse.text();
-                        console.error('Google Ads API error:', errorText);
-                        apiErrors.push(`Google Ads API error: ${errorText}`);
-                    }
-                } catch (error) {
-                    console.error('Error in Google Ads API call:', error);
-                    apiErrors.push(`Google Ads API error: ${error.message}`);
-                }
-                
-                // 2. Second try - DataForSEO Labs Keyword Suggestions
-                try {
-                    updateLoadingMessage('Searching keyword suggestions...');
-                    
-                    const suggestionsUrl = 'https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live';
-                    const suggestionsRequestData = [{
-                        keyword: keyword,
-                        location_code: locationCode,
-                        language_code: "en",
-                        include_seed_keyword: true,
-                        limit: 300
-                    }];
-                    
-                    const suggestionsResponse = await fetchWithTimeout(suggestionsUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(suggestionsRequestData)
-                    }, 45000);
-                    
-                    if (suggestionsResponse.ok) {
-                        const suggestionsData = await suggestionsResponse.json();
-                        console.log('Keyword Suggestions API response:', suggestionsData);
-                        
-                        if (suggestionsData.tasks && suggestionsData.tasks[0].result && 
-                            suggestionsData.tasks[0].result.length > 0 && suggestionsData.tasks[0].result[1]?.items) {
-                            
-                            updateLoadingMessage('Processing keyword suggestions...');
-                            
-                            const suggestions = suggestionsData.tasks[0].result[1].items.map(item => ({
-                                keyword: item.keyword,
-                                searchVolume: item.keyword_info?.search_volume || 0,
-                                cpc: item.keyword_info?.cpc || 0,
-                                competition: item.keyword_info?.competition || 0,
-                                difficulty: item.keyword_properties?.keyword_difficulty || 0
-                            }));
-                            
-                            combinedKeywords = [...combinedKeywords, ...suggestions];
-                            console.log(`Added ${suggestions.length} keywords from Suggestions API`);
-                        } else {
-                            console.log('No results from Keyword Suggestions API');
-                            apiErrors.push('No results from Keyword Suggestions API');
-                        }
-                    } else {
-                        const errorText = await suggestionsResponse.text();
-                        console.error('Keyword Suggestions API error:', errorText);
-                        apiErrors.push(`Keyword Suggestions API error: ${errorText}`);
-                    }
-                } catch (error) {
-                    console.error('Error in Keyword Suggestions API call:', error);
-                    apiErrors.push(`Keyword Suggestions API error: ${error.message}`);
-                }
-                
-                // 3. Third try - DataForSEO Labs Related Keywords
-                try {
-                    updateLoadingMessage('Searching related keywords...');
-                    
-                    const relatedUrl = 'https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live';
-                    const relatedRequestData = [{
-                        keyword: keyword,
-                        location_code: locationCode,
-                        language_code: "en",
-                        limit: 300
-                    }];
-                    
-                    const relatedResponse = await fetchWithTimeout(relatedUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify(relatedRequestData)
-                    }, 45000);
-                    
-                    if (relatedResponse.ok) {
-                        const relatedData = await relatedResponse.json();
-                        console.log('Related Keywords API response:', relatedData);
-                        
-                        if (relatedData.tasks && relatedData.tasks[0].result && 
-                            relatedData.tasks[0].result.length > 0 && relatedData.tasks[0].result[0]?.items) {
-                            
-                            updateLoadingMessage('Processing related keywords...');
-                            
-                            const related = relatedData.tasks[0].result[0].items.map(item => ({
-                                keyword: item.keyword,
-                                searchVolume: item.keyword_data?.keyword_info?.search_volume || 0,
-                                cpc: item.keyword_data?.keyword_info?.cpc || 0,
-                                competition: item.keyword_data?.keyword_info?.competition || 0,
-                                difficulty: item.keyword_data?.keyword_properties?.keyword_difficulty || 0
-                            }));
-                            
-                            combinedKeywords = [...combinedKeywords, ...related];
-                            console.log(`Added ${related.length} keywords from Related Keywords API`);
-                        } else {
-                            console.log('No results from Related Keywords API');
-                            apiErrors.push('No results from Related Keywords API');
-                        }
-                    } else {
-                        const errorText = await relatedResponse.text();
-                        console.error('Related Keywords API error:', errorText);
-                        apiErrors.push(`Related Keywords API error: ${errorText}`);
-                    }
-                } catch (error) {
-                    console.error('Error in Related Keywords API call:', error);
-                    apiErrors.push(`Related Keywords API error: ${error.message}`);
-                }
-                
-                // If all API calls failed and we have a mock for this category, use it
-                if (combinedKeywords.length === 0) {
-                    updateLoadingMessage('No results from API, checking for mock data...');
-                    
-                    // Try to find mock data for this keyword
-                    let mockDataFound = false;
-                    for (const category in mockKeywordData) {
-                        if (keyword.toLowerCase().includes(category.toLowerCase()) || 
-                            category.toLowerCase().includes(keyword.toLowerCase())) {
-                            combinedKeywords = mockKeywordData[category];
-                            mockDataFound = true;
-                            console.log(`Using mock data for "${category}"`);
-                            break;
-                        }
-                    }
-                    
-                    if (!mockDataFound) {
-                        // If no specific mock data exists, but keyword is a high CPC category
-                        if (isLikelyHighCPC) {
-                            // Use a generic high CPC category as fallback
-                            const fallbackCategory = Object.keys(mockKeywordData)[0];
-                            combinedKeywords = mockKeywordData[fallbackCategory].map(item => ({
-                                ...item,
-                                keyword: `${keyword} ${item.keyword.split(' ').pop()}`
-                            }));
-                            console.log(`Using modified mock data from "${fallbackCategory}"`);
-                        } else if (apiErrors.length > 0) {
-                            throw new Error(`API requests failed: ${apiErrors.join(', ')}`);
-                        } else {
-                            throw new Error('No keyword data found');
-                        }
+                updateLoadingMessage(`Searching Google Ads for "${searchTerm}"...`);
+                const googleAdsUrl = 'https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live';
+                const adsRequestData = [{
+                    keywords: [searchTerm],
+                    location_code: locationCode,
+                    language_code: "en",
+                    include_adult_keywords: false,
+                    sort_by: "relevance",
+                    limit: 300 // Fetch more to allow for broader filtering later
+                }];
+                const adsResponse = await fetchWithTimeout(googleAdsUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(adsRequestData)
+                }, 45000);
+                if (adsResponse.ok) {
+                    const adsData = await adsResponse.json();
+                    if (adsData.tasks && adsData.tasks[0].result && adsData.tasks[0].result.length > 0) {
+                        const adsKeywords = adsData.tasks[0].result[0].keywords.map(item => ({
+                            keyword: item.keyword,
+                            searchVolume: item.average_monthly_searches || 0,
+                            cpc: item.competition_metrics?.cpc || 0,
+                            competition: item.competition_index || 0,
+                            difficulty: Math.floor(Math.random() * 40) + 40 // Placeholder
+                        }));
+                        combinedKeywords = [...combinedKeywords, ...adsKeywords];
+                    } else { apiErrors.push('No results from Google Ads API'); }
+                } else { apiErrors.push(`Google Ads API error: ${await adsResponse.text()}`); }
+            } catch (error) { apiErrors.push(`Google Ads API error: ${error.message}`); }
+
+            // 2. Second try - DataForSEO Labs Keyword Suggestions
+            try {
+                updateLoadingMessage(`Searching Suggestions for "${searchTerm}"...`);
+                const suggestionsUrl = 'https://api.dataforseo.com/v3/dataforseo_labs/google/keyword_suggestions/live';
+                const suggestionsRequestData = [{
+                    keyword: searchTerm,
+                    location_code: locationCode,
+                    language_code: "en",
+                    include_seed_keyword: true,
+                    limit: 300
+                }];
+                const suggestionsResponse = await fetchWithTimeout(suggestionsUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(suggestionsRequestData)
+                }, 45000);
+                if (suggestionsResponse.ok) {
+                    const suggestionsData = await suggestionsResponse.json();
+                    if (suggestionsData.tasks && suggestionsData.tasks[0].result && suggestionsData.tasks[0].result.length > 0 && suggestionsData.tasks[0].result[1]?.items) {
+                        const suggestions = suggestionsData.tasks[0].result[1].items.map(item => ({
+                            keyword: item.keyword,
+                            searchVolume: item.keyword_info?.search_volume || 0,
+                            cpc: item.keyword_info?.cpc || 0,
+                            competition: item.keyword_info?.competition || 0,
+                            difficulty: item.keyword_properties?.keyword_difficulty || 0
+                        }));
+                        combinedKeywords = [...combinedKeywords, ...suggestions];
+                    } else { apiErrors.push('No results from Keyword Suggestions API'); }
+                } else { apiErrors.push(`Keyword Suggestions API error: ${await suggestionsResponse.text()}`); }
+            } catch (error) { apiErrors.push(`Keyword Suggestions API error: ${error.message}`); }
+
+            // 3. Third try - DataForSEO Labs Related Keywords
+            try {
+                updateLoadingMessage(`Searching Related Keywords for "${searchTerm}"...`);
+                const relatedUrl = 'https://api.dataforseo.com/v3/dataforseo_labs/google/related_keywords/live';
+                const relatedRequestData = [{
+                    keyword: searchTerm,
+                    location_code: locationCode,
+                    language_code: "en",
+                    limit: 300
+                }];
+                const relatedResponse = await fetchWithTimeout(relatedUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': 'Basic ' + btoa(`${credentials.dataForSEO.login}:${credentials.dataForSEO.password}`),
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(relatedRequestData)
+                }, 45000);
+                if (relatedResponse.ok) {
+                    const relatedData = await relatedResponse.json();
+                    if (relatedData.tasks && relatedData.tasks[0].result && relatedData.tasks[0].result.length > 0 && relatedData.tasks[0].result[0]?.items) {
+                        const related = relatedData.tasks[0].result[0].items.map(item => ({
+                            keyword: item.keyword,
+                            searchVolume: item.keyword_data?.keyword_info?.search_volume || 0,
+                            cpc: item.keyword_data?.keyword_info?.cpc || 0,
+                            competition: item.keyword_data?.keyword_info?.competition || 0,
+                            difficulty: item.keyword_data?.keyword_properties?.keyword_difficulty || 0
+                        }));
+                        combinedKeywords = [...combinedKeywords, ...related];
+                    } else { apiErrors.push('No results from Related Keywords API'); }
+                } else { apiErrors.push(`Related Keywords API error: ${await relatedResponse.text()}`); }
+            } catch (error) { apiErrors.push(`Related Keywords API error: ${error.message}`); }
+
+            if (apiErrors.length > 0) {
+                console.warn(`API errors for "${searchTerm}": ${apiErrors.join(', ')}`);
+            }
+
+            // Mock data fallback if all API calls fail or return no data
+            if (combinedKeywords.length === 0) {
+                updateLoadingMessage(`No API results for "${searchTerm}", checking mock data...`);
+                let mockDataFound = false;
+                for (const category in mockKeywordData) {
+                    if (typeof searchTerm === 'string' && searchTerm.toLowerCase().includes(category.toLowerCase()) ||
+                        typeof category === 'string' && category.toLowerCase().includes(searchTerm.toLowerCase())) {
+                        combinedKeywords = mockKeywordData[category].map(kw => ({...kw})); // Clone mock data
+                        mockDataFound = true;
+                        console.log(`Using mock data for "${category}" for search term "${searchTerm}"`);
+                        break;
                     }
                 }
-                
-                // Remove duplicates
-                updateLoadingMessage('Removing duplicate keywords...');
-                
-                const uniqueKeywords = [];
-                const seenKeywords = new Set();
-                
-                for (const kw of combinedKeywords) {
-                    if (!seenKeywords.has(kw.keyword.toLowerCase())) {
-                        seenKeywords.add(kw.keyword.toLowerCase());
-                        uniqueKeywords.push(kw);
-                    }
-                }
-                
-                console.log(`Removed ${combinedKeywords.length - uniqueKeywords.length} duplicate keywords`);
-                
-                // Filter keywords - try with input filter first
-                updateLoadingMessage('Filtering high CPC keywords...');
-                let filteredKeywords = uniqueKeywords.filter(kw => 
-                    kw.cpc >= minCPC && 
-                    kw.searchVolume >= minVolume
-                );
-                
-                console.log(`Found ${filteredKeywords.length} keywords matching initial filters (CPC >= ${minCPC})`);
-                
-                // If no results with initial filter, try a lower CPC threshold
-                if (filteredKeywords.length === 0 && minCPC > 3) {
-                    const lowerCPC = 3;
-                    updateLoadingMessage(`No results with CPC >= ${minCPC}, trying CPC >= ${lowerCPC}...`);
-                    
-                    filteredKeywords = uniqueKeywords.filter(kw => 
-                        kw.cpc >= lowerCPC && 
-                        kw.searchVolume >= minVolume
+                if (!mockDataFound) {
+                     // Check if category is likely to have high CPC based on highCPCCategories
+                    const isLikelyHighCPC = highCPCCategories.some(category =>
+                        typeof searchTerm === 'string' && searchTerm.toLowerCase().includes(category.toLowerCase())
                     );
-                    
-                    console.log(`Found ${filteredKeywords.length} keywords with relaxed CPC filter (CPC >= ${lowerCPC})`);
+                    if (isLikelyHighCPC) {
+                        const fallbackCategory = Object.keys(mockKeywordData)[0];
+                        combinedKeywords = mockKeywordData[fallbackCategory].map(item => ({
+                            ...item, // Clone
+                            keyword: `${searchTerm} ${item.keyword.split(' ').pop()}` // Modify keyword
+                        }));
+                        console.log(`Using modified mock data from "${fallbackCategory}" for "${searchTerm}"`);
+                    } else {
+                         console.log(`No specific mock data found for "${searchTerm}" and not a high CPC category.`);
+                    }
                 }
+            }
+
+            // Remove duplicates from this specific fetch
+            const uniqueKeywords = [];
+            const seenKeywords = new Set();
+            for (const kw of combinedKeywords) {
+                if (kw && typeof kw.keyword === 'string' && !seenKeywords.has(kw.keyword.toLowerCase())) {
+                    seenKeywords.add(kw.keyword.toLowerCase());
+                    uniqueKeywords.push(kw);
+                }
+            }
+            return uniqueKeywords;
+        }
+
+        async function fetchHierarchicalKeywords(currentSearchTerm, locationCode, minVolume, baseMinCPC, userMinCPC, credentials, currentDepth, maxDepth = 2, allFoundKeywordsSet = new Set(), allProcessedTerms = new Set()) {
+            if (currentDepth >= maxDepth || allProcessedTerms.has(currentSearchTerm.toLowerCase())) {
+                return [];
+            }
+            allProcessedTerms.add(currentSearchTerm.toLowerCase());
+
+            updateLoadingMessage(`Depth ${currentDepth + 1}/${maxDepth}: Searching for "${currentSearchTerm}"...`);
+
+            const rawKeywords = await fetchRawKeywordData(currentSearchTerm, locationCode, credentials);
+
+            const effectiveMinCPC = Math.max(baseMinCPC, userMinCPC);
+
+            const currentLevelFilteredKeywords = rawKeywords.filter(kw => {
+                const meetsCriteria = kw.cpc >= effectiveMinCPC && kw.searchVolume >= minVolume;
+                if (meetsCriteria && !allFoundKeywordsSet.has(kw.keyword.toLowerCase())) {
+                    allFoundKeywordsSet.add(kw.keyword.toLowerCase());
+                    return true;
+                }
+                return false;
+            });
+
+            let collectedKeywords = [...currentLevelFilteredKeywords];
+
+            if (currentDepth < maxDepth -1) {
+                let nextLevelSearchTerms = new Set();
+                currentLevelFilteredKeywords.forEach(kw => {
+                    if (kw.keyword.length > currentSearchTerm.length && kw.keyword.toLowerCase().startsWith(currentSearchTerm.toLowerCase())) {
+                        const parts = kw.keyword.split(' ');
+                        const currentSearchTermPartsCount = currentSearchTerm.split(' ').length;
+                        if (parts.length > currentSearchTermPartsCount) {
+                            // Take currentSearchTerm + next one or two words
+                            let potentialNextTerm = parts.slice(0, currentSearchTermPartsCount + 1).join(' ');
+                            if (potentialNextTerm.length > currentSearchTerm.length && potentialNextTerm.toLowerCase() !== currentSearchTerm.toLowerCase()) {
+                                nextLevelSearchTerms.add(potentialNextTerm);
+                            }
+                            if (parts.length > currentSearchTermPartsCount + 1) {
+                                potentialNextTerm = parts.slice(0, currentSearchTermPartsCount + 2).join(' ');
+                                 if (potentialNextTerm.length > currentSearchTerm.length && potentialNextTerm.toLowerCase() !== currentSearchTerm.toLowerCase()) {
+                                    nextLevelSearchTerms.add(potentialNextTerm);
+                                }
+                            }
+                        }
+                    }
+                });
+
+                // Limit next level searches
+                const limitedNextLevelTerms = Array.from(nextLevelSearchTerms).slice(0, 3); // Explore top 3 derived terms
+
+                for (const nextTerm of limitedNextLevelTerms) {
+                    if (!allProcessedTerms.has(nextTerm.toLowerCase())) {
+                        const deeperKeywords = await fetchHierarchicalKeywords(nextTerm, locationCode, minVolume, baseMinCPC, userMinCPC, credentials, currentDepth + 1, maxDepth, allFoundKeywordsSet, allProcessedTerms);
+                        deeperKeywords.forEach(dkw => {
+                            // Ensure uniqueness across all levels before adding
+                            if (!collectedKeywords.some(ckw => ckw.keyword.toLowerCase() === dkw.keyword.toLowerCase())) {
+                                collectedKeywords.push(dkw);
+                            }
+                        });
+                    }
+                }
+            }
+            return collectedKeywords;
+        }
+
+        // findAnchorKeywords is now the main function called by the handler, using the hierarchical search
+        async function findAnchorKeywords(initialSearchTerm, location, userMinCPC, minVolume, credentials) {
+            showLoading('anchor-results', 'Initializing hierarchical anchor keyword search...');
+            console.log('Starting hierarchical anchor keyword search for:', initialSearchTerm);
+
+            const locationCode = getLocationCodeFromName(location);
+            const baseMinCPC = 5; // The $5 CPC floor
+            const allFoundKeywordsSet = new Set(); // For global deduplication
+            const allProcessedTerms = new Set(); // To avoid re-processing same search term
+
+            try {
+                const hierarchicalResults = await fetchHierarchicalKeywords(
+                    initialSearchTerm,
+                    locationCode,
+                    minVolume,
+                    baseMinCPC,
+                    userMinCPC,
+                    credentials,
+                    0, // initial depth
+                    2, // maxDepth (e.g., initial + 1 level deeper) - reduced for now
+                    allFoundKeywordsSet,
+                    allProcessedTerms
+                );
+
+                // The allFoundKeywordsSet now contains all unique keywords that met criteria at some point.
+                // We need to re-filter them based on the final effectiveMinCPC to ensure consistency,
+                // although fetchHierarchicalKeywords should already do this for keywords it adds.
+                // However, it's safer to ensure the final list adheres to the effectiveMinCPC.
+                const effectiveMinCPC = Math.max(baseMinCPC, userMinCPC);
+                let finalFilteredKeywords = hierarchicalResults.filter(kw => kw.cpc >= effectiveMinCPC && kw.searchVolume >= minVolume);
+
+                // Final deduplication based on keyword string (in case any duplicates slipped through Set logic if objects were different)
+                const finalUniqueKeywordsMap = new Map();
+                finalFilteredKeywords.forEach(kw => {
+                    if (!finalUniqueKeywordsMap.has(kw.keyword.toLowerCase())) {
+                        finalUniqueKeywordsMap.set(kw.keyword.toLowerCase(), kw);
+                    }
+                });
+                finalFilteredKeywords = Array.from(finalUniqueKeywordsMap.values());
                 
-                // If still no results, try an even lower threshold just to show something
-                if (filteredKeywords.length === 0) {
-                    const lowestCPC = 1;
-                    updateLoadingMessage(`No results with relaxed filters, trying minimum filter (CPC >= ${lowestCPC})...`);
-                    
-                    filteredKeywords = uniqueKeywords.filter(kw => 
-                        kw.cpc >= lowestCPC && 
-                        kw.searchVolume >= minVolume
-                    );
-                    
-                    console.log(`Found ${filteredKeywords.length} keywords with minimum CPC filter (CPC >= ${lowestCPC})`);
-                }
+                console.log(`Total unique keywords from hierarchy: ${finalFilteredKeywords.length}`);
                 
                 // Sort by CPC descending
-                filteredKeywords.sort((a, b) => b.cpc - a.cpc);
+                finalFilteredKeywords.sort((a, b) => b.cpc - a.cpc);
                 
-                // Limit to top 50 results
-                const topKeywords = filteredKeywords.slice(0, 50);
+                // Limit to top results (e.g., 50 or 100)
+                const topKeywords = finalFilteredKeywords.slice(0, 50);
                 
-                console.log(`Returning top ${topKeywords.length} keywords sorted by CPC`);
-                updateLoadingMessage('Search complete!');
+                console.log(`Returning top ${topKeywords.length} keywords from hierarchical search, sorted by CPC`);
+                updateLoadingMessage('Hierarchical search complete!');
                 
                 return topKeywords;
             } catch (error) {
-                console.error('Error in findAnchorKeywords:', error);
-                throw error;
+                console.error('Error in findAnchorKeywords (hierarchical):', error);
+                updateLoadingMessage(`Error: ${error.message}`);
+                // document.getElementById('anchor-results').innerHTML = `<div class="message error">Error: ${error.message}</div>`;
+                throw error; // Re-throw to be caught by handler
             }
         }
-
         // Fetch with timeout
         async function fetchWithTimeout(url, options, timeout = 30000) {
             const controller = new AbortController();
